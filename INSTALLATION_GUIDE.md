@@ -18,6 +18,9 @@ export BQ_PROJECT=your-project-id         # BigQuery project
 export BQ_DATASET=your-dataset-name       # BigQuery dataset
 export BQ_LOCATION=US                     # BigQuery location
 
+# IMPORTANT: Download DataSketches C++ library first
+make datasketches-cpp
+
 # Build and deploy theta sketch functions
 make theta.install
 ```
@@ -106,12 +109,26 @@ export DATAFORM_PROJECT_DIR=$(pwd)
 
 **Important**: The GCS bucket must already exist and be accessible from your project.
 
-#### 3. Build WebAssembly Artifacts
+#### 3. Download DataSketches C++ Library
+
+**CRITICAL FIRST STEP**: Download the required C++ library before building:
 
 ```bash
-# Download DataSketches C++ library (one-time setup)
+# Download DataSketches C++ library (REQUIRED - one-time setup)
 make datasketches-cpp
 
+# Verify the library was downloaded correctly
+ls -la datasketches-cpp/
+# Should show: datasketches-cpp -> datasketches-cpp-5.2.0/
+
+# Verify theta headers are available
+ls datasketches-cpp/theta/include/
+# Should show: theta_sketch.hpp and other header files
+```
+
+#### 4. Build WebAssembly Artifacts
+
+```bash
 # Build theta sketch WebAssembly modules
 make theta
 
@@ -119,7 +136,7 @@ make theta
 ls theta/theta_sketch.*
 ```
 
-#### 4. Deploy to BigQuery
+#### 5. Deploy to BigQuery
 
 ```bash
 # Upload WebAssembly artifacts to GCS and create SQL functions
@@ -130,7 +147,7 @@ make theta.upload  # Upload to GCS
 make theta.create  # Create BigQuery functions
 ```
 
-#### 5. Verify Installation
+#### 6. Verify Installation
 
 ```bash
 # Test the functions work
@@ -236,7 +253,31 @@ theta_sketch_a_not_b_math(sketchA, sketchB, 9001)
 
 ### Common Issues
 
-#### 1. Permission Errors
+#### 1. "theta_sketch.hpp file not found" Error
+
+**Error Message:**
+```
+theta_sketch.cpp:23:10: fatal error: 'theta_sketch.hpp' file not found
+   23 | #include <theta_sketch.hpp>
+      |          ^~~~~~~~~~~~~~~~~~
+```
+
+**Cause**: DataSketches C++ library not downloaded
+
+**Solution**: 
+```bash
+# Download the required C++ library FIRST
+make datasketches-cpp
+
+# Verify it was downloaded correctly
+ls -la datasketches-cpp
+# Should show: datasketches-cpp -> datasketches-cpp-5.2.0/
+
+# Then proceed with building
+make theta
+```
+
+#### 2. Permission Errors
 ```bash
 # Error: Access denied to GCS bucket
 # Solution: Ensure your service account has Storage Admin role
@@ -245,14 +286,38 @@ gcloud projects add-iam-policy-binding your-project-id \
   --role="roles/storage.admin"
 ```
 
-#### 2. BigQuery Function Creation Fails
+#### 3. Emscripten Version Issues
+
+**Error Message:**
+```
+emcc: error: ... failed (returned 1)
+```
+
+**Cause**: Wrong Emscripten version or environment not activated
+
+**Solution**:
+```bash
+# Check Emscripten version (should be 4.0.7 for compatibility)
+emcc --version
+
+# If wrong version, install the correct one:
+cd emsdk
+./emsdk install 4.0.7
+./emsdk activate 4.0.7
+source ./emsdk_env.sh
+
+# Verify activation worked
+emcc --version
+```
+
+#### 4. BigQuery Function Creation Fails
 ```bash
 # Error: Dataset not found
 # Solution: Create the dataset first
 bq mk --dataset --location=${BQ_LOCATION} ${BQ_PROJECT}:${BQ_DATASET}
 ```
 
-#### 3. Dataform Compilation Errors
+#### 5. Dataform Compilation Errors
 ```bash
 # Error: dataform command not found
 # Solution: Install Dataform CLI
@@ -263,7 +328,7 @@ npm install -g @dataform/cli
 dataform init-creds
 ```
 
-#### 4. WebAssembly Build Errors
+#### 6. WebAssembly Build Errors
 ```bash
 # Error: emcc command not found
 # Solution: Activate Emscripten environment

@@ -35,10 +35,13 @@ export BQ_PROJECT=your-project-id
 export BQ_DATASET=your-dataset-name
 export BQ_LOCATION=US
 
-# 3. Deploy the fixed functions
+# 3. Download required C++ library (CRITICAL FIRST STEP)
+make datasketches-cpp
+
+# 4. Deploy the fixed functions
 make theta.install
 
-# 4. Test it works
+# 5. Test it works
 bq query --use_legacy_sql=false "
 SELECT bq_util_functions.theta_sketch_intersection_math(
   bq_util_functions.theta_sketch_agg_string('user1'),
