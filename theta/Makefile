@@ -19,7 +19,6 @@ EMCC=emcc
 EMCFLAGS=-I../datasketches-cpp/common/include \
 	-I../datasketches-cpp/theta/include \
 	--no-entry \
-	-sWASM_BIGINT=1 \
 	-sEXPORTED_FUNCTIONS=[_malloc,_free] \
 	-sENVIRONMENT=shell \
 	-sTOTAL_MEMORY=1024MB \

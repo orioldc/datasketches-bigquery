@@ -24,7 +24,6 @@ RETURNS BYTES
 LANGUAGE js
 OPTIONS (
   library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.js"],
-  js_parameter_encoding_mode='STANDARD',
   description = '''Computes a sketch that represents the scalar union of the two given sketches.
 
 Param sketchA: the first sketch as BYTES.
@@ -37,14 +36,62 @@ For more information:
  - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
 '''
 ) AS R"""
+
+// Base64 decode function since BigQuery doesn't have atob
+function base64ToBytes(base64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = [];
+  let i = 0;
+  
+  // Remove padding and non-base64 chars
+  base64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  
+  while (i < base64.length) {
+    const a = chars.indexOf(base64.charAt(i++));
+    const b = chars.indexOf(base64.charAt(i++));
+    const c = chars.indexOf(base64.charAt(i++));
+    const d = chars.indexOf(base64.charAt(i++));
+    
+    const bitmap = (a << 18) | (b << 12) | (c << 6) | d;
+    
+    result.push((bitmap >> 16) & 255);
+    if (c !== 64) result.push((bitmap >> 8) & 255);
+    if (d !== 64) result.push(bitmap & 255);
+  }
+  
+  return new Uint8Array(result);
+}
+
+// Convert Uint8Array to string for WebAssembly
+function uint8ArrayToString(uint8Array) {
+  let result = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    result += String.fromCharCode(uint8Array[i]);
+  }
+  return result;
+}
+
 if (sketchA == null && sketchB == null) return null;
-lg_k = lg_k ? Number(lg_k) : Number(Module.DEFAULT_LG_K);
-seed = seed ? BigInt(seed) : BigInt(Module.DEFAULT_SEED);
+
+lg_k = lg_k ? Number(lg_k) : 12;
+seed = seed ? Number(seed) : 9001;
+
 var u = null;
 try {
   u = new Module.theta_union(lg_k, seed);
-  if (sketchA != null) u.updateWithBytes(sketchA, seed);
-  if (sketchB != null) u.updateWithBytes(sketchB, seed);
+  
+  if (sketchA != null) {
+    const sketchABytes = typeof sketchA === 'string' ? base64ToBytes(sketchA) : sketchA;
+    const sketchAString = uint8ArrayToString(sketchABytes);
+    u.updateWithBytes(sketchAString, seed);
+  }
+  
+  if (sketchB != null) {
+    const sketchBBytes = typeof sketchB === 'string' ? base64ToBytes(sketchB) : sketchB;
+    const sketchBString = uint8ArrayToString(sketchBBytes);
+    u.updateWithBytes(sketchBString, seed);
+  }
+  
   return u.getResultAsUint8ArrayCompressed();
 } catch (e) {
   if (e.message != null) throw e;

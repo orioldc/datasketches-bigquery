@@ -24,7 +24,6 @@ RETURNS STRUCT<estimate FLOAT64, lower_bound FLOAT64, upper_bound FLOAT64>
 LANGUAGE js
 OPTIONS (
   library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.js"],
-  js_parameter_encoding_mode='STANDARD',
   description = '''Gets distinct count estimate and bounds from a given sketch.
 
 Param sketch: The given sketch to query as BYTES.
@@ -41,10 +40,36 @@ For more information:
  - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
 '''
 ) AS R"""
+
+// Base64 decode function since BigQuery doesn't have atob
+function base64ToBytes(base64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = [];
+  let i = 0;
+  
+  // Remove padding and non-base64 chars
+  base64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  
+  while (i < base64.length) {
+    const a = chars.indexOf(base64.charAt(i++));
+    const b = chars.indexOf(base64.charAt(i++));
+    const c = chars.indexOf(base64.charAt(i++));
+    const d = chars.indexOf(base64.charAt(i++));
+    
+    const bitmap = (a << 18) | (b << 12) | (c << 6) | d;
+    
+    result.push((bitmap >> 16) & 255);
+    if (c !== 64) result.push((bitmap >> 8) & 255);
+    if (d !== 64) result.push(bitmap & 255);
+  }
+  
+  return new Uint8Array(result);
+}
+
 if (sketch == null) return null;
-const default_seed = BigInt(Module.DEFAULT_SEED);
+const default_seed = 9001; // Match existing sketch seed hash 37836
 try {
-  const result = Module.compact_theta_sketch.getEstimateAndBoundsFromBytes(sketch, Number(num_std_devs), seed ? BigInt(seed) : default_seed);
+  const result = Module.compact_theta_sketch.getEstimateAndBoundsFromBytes(typeof sketch === 'string' ? base64ToBytes(sketch) : sketch, Number(num_std_devs), seed ? Number(seed) : default_seed);
   return {
     estimate: result.get(0),
     lower_bound: result.get(1),

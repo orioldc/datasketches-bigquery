@@ -1,0 +1,132 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+config { hasOutput: true, tags: ["theta", "udafs"] }
+
+CREATE OR REPLACE AGGREGATE FUNCTION ${self()}(sketch BYTES, operation STRING, params STRUCT<lg_k BYTEINT, seed INT64> NOT AGGREGATE)
+RETURNS BYTES
+LANGUAGE js
+OPTIONS (
+  library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs"],
+  description = '''Performs binary operations (union, intersection, a_not_b) on exactly 2 sketches.
+
+This is the unified .mjs-compatible function that handles all set operations consistently.
+
+Param sketch: input sketches as BYTES (exactly 2 required).
+Param operation: operation type - "union", "intersection", or "a_not_b".
+Param params: STRUCT with lg_k and seed parameters.
+Returns: a Compact, Compressed Theta Sketch, as BYTES.
+
+For more information:
+ - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
+'''
+) AS R"""
+
+import ModuleFactory from "${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs";
+var Module = await ModuleFactory();
+
+// Base64 decode function since BigQuery doesn't have atob
+function base64ToBytes(base64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = [];
+  let i = 0;
+  
+  // Remove padding and non-base64 chars
+  base64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  
+  while (i < base64.length) {
+    const a = chars.indexOf(base64.charAt(i++));
+    const b = chars.indexOf(base64.charAt(i++));
+    const c = chars.indexOf(base64.charAt(i++));
+    const d = chars.indexOf(base64.charAt(i++));
+    
+    const bitmap = (a << 18) | (b << 12) | (c << 6) | d;
+    
+    result.push((bitmap >> 16) & 255);
+    if (c !== 64) result.push((bitmap >> 8) & 255);
+    if (d !== 64) result.push(bitmap & 255);
+  }
+  
+  return new Uint8Array(result);
+}
+
+// Convert Uint8Array to string for WebAssembly
+function uint8ArrayToString(uint8Array) {
+  let result = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    result += String.fromCharCode(uint8Array[i]);
+  }
+  return result;
+}
+
+export function initialState(operation, params) {
+  return {
+    operation: operation,
+    lg_k: params.lg_k == null ? 12 : Number(params.lg_k),
+    seed: params.seed == null ? 9001 : Math.floor(Number(params.seed)) >>> 0,
+    sketches: []
+  };
+}
+
+export function aggregate(state, sketch, operation, params) {
+  if (sketch != null) {
+    const sketchBytes = typeof sketch === 'string' ? base64ToBytes(sketch) : sketch;
+    const sketchString = uint8ArrayToString(sketchBytes);
+    state.sketches.push(sketchString);
+  }
+}
+
+export function merge(state1, state2) {
+  throw new Error("MERGE not supported for binary operations - use single-node aggregation");
+}
+
+export function finalize(state) {
+  if (state.sketches.length !== 2) {
+    throw new Error("Binary operation requires exactly 2 sketches, got " + state.sketches.length);
+  }
+  
+  const sketch1 = state.sketches[0];
+  const sketch2 = state.sketches[1];
+  
+  try {
+    switch (state.operation.toLowerCase()) {
+      case 'union':
+        const u = new Module.theta_union(state.lg_k, state.seed);
+        u.updateWithBytes(sketch1, state.seed);
+        u.updateWithBytes(sketch2, state.seed);
+        const result = u.getResultAsUint8ArrayCompressed();
+        u.delete();
+        return result;
+        
+      case 'intersection':
+        return Module.thetaIntersectionCompressed(sketch1, sketch2, state.seed);
+        
+      case 'a_not_b':
+        return Module.thetaAnotBCompressed(sketch1, sketch2, state.seed);
+        
+      default:
+        throw new Error("Unknown operation: " + state.operation + ". Use 'union', 'intersection', or 'a_not_b'");
+    }
+  } catch (e) {
+    if (e.message != null) throw e;
+    throw new Error(Module.getExceptionMessage(e));
+  }
+}
+
+""";

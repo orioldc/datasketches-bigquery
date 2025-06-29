@@ -38,16 +38,19 @@ For more information:
 ) AS R"""
 import ModuleFactory from "${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs";
 var Module = await ModuleFactory();
-const default_lg_k = Number(Module.DEFAULT_LG_K);
-const default_seed = BigInt(Module.DEFAULT_SEED);
+const default_lg_k = 12;
+const default_seed = 9001; // Match existing sketch seed hash 37836
 const default_p = 1.0;
 
 // UDAF interface
 export function initialState(params) {
+  // Force seed to be a 32-bit integer to avoid BigInt conversion
+  let seedValue = params.seed == null ? default_seed : Math.floor(Number(params.seed)) >>> 0;
+  
   return {
     lg_k: params.lg_k == null ? default_lg_k : Number(params.lg_k),
-    seed: params.seed == null ? default_seed : BigInt(params.seed),
-    p: params.p == null ? default_p : params.p
+    seed: seedValue, // Force to 32-bit unsigned integer
+    p: params.p == null ? default_p : Number(params.p)
   };
 }
 
@@ -55,6 +58,7 @@ export function aggregate(state, str) {
   if (str == null) return;
   try {
     if (state.sketch == null) {
+      // Use regular numbers instead of BigInt
       state.sketch = new Module.update_theta_sketch(state.lg_k, state.seed, state.p);
     }
     state.sketch.updateString(str);

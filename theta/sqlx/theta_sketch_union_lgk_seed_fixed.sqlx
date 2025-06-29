@@ -17,27 +17,27 @@
  * under the License.
  */
 
-config { hasOutput: true, tags: ["theta", "udfs"] }
+config { hasOutput: true, tags: ["theta", "udafs"] }
 
-CREATE OR REPLACE FUNCTION ${self()}(sketchA BYTES, sketchB BYTES, seed INT64)
-RETURNS STRUCT<lower_bound FLOAT64, estimate FLOAT64, upper_bound FLOAT64>
+CREATE OR REPLACE AGGREGATE FUNCTION ${self()}(sketch BYTES, lg_k BYTEINT, seed INT64)
+RETURNS BYTES
 LANGUAGE js
 OPTIONS (
   library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs"],
-  description = '''Computes the Jaccard similarity index with upper and lower bounds.
-The Jaccard similarity index J(A,B) = (A ^ B)/(A U B) is used to measure how similar the two sketches are to each other.
-If J = 1.0, the sketches are considered equal. If J = 0, the two sketches are disjoint.
-A Jaccard of .95 means the overlap between the two sets is 95% of the union of the two sets.
+  description = '''Computes a sketch that represents the union of input sketches.
 
-Param sketchA: the first sketch as bytes.
-Param sketchB: the second sketch as bytes.
+Param sketch: sketches to union as BYTES.
+Param lg_k: the sketch accuracy/size parameter as an integer in the range [4, 26].
 Param seed: This is used to confirm that the given sketches were configured with the correct seed.
-Returns: a STRUCT with three FLOAT64 values {lower_bound, estimate, upper_bound} of the Jaccard index.
+Returns: a Compact, Compressed Theta Sketch, as BYTES.
+
+This is the .mjs-compatible version that works with other aggregation functions.
 
 For more information:
  - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
- '''
+'''
 ) AS R"""
+
 import ModuleFactory from "${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs";
 var Module = await ModuleFactory();
 
@@ -75,21 +75,45 @@ function uint8ArrayToString(uint8Array) {
   return result;
 }
 
-if (sketchA == null || sketchB == null) return null;
-const default_seed = 9001; // Match existing sketch seed hash 37836
-try {
-  const sketchABytes = typeof sketchA === 'string' ? base64ToBytes(sketchA) : sketchA;
-  const sketchBBytes = typeof sketchB === 'string' ? base64ToBytes(sketchB) : sketchB;
-  const sketchAString = uint8ArrayToString(sketchABytes);
-  const sketchBString = uint8ArrayToString(sketchBBytes);
-  const jaccard = Module.thetaJaccardSimilarity(sketchAString, sketchBString, seed == null ? default_seed : Number(seed));
-  return {
-    lower_bound: jaccard.get(0),
-    estimate: jaccard.get(1),
-    upper_bound: jaccard.get(2)
-  };
-} catch (e) {
-  if (e.message != null) throw e;
-  throw new Error(Module.getExceptionMessage(e));
+export function initialState() {
+  return {union: null};
 }
+
+export function aggregate(state, sketch, lg_k, seed) {
+  if (state.union == null) {
+    const lg_k_val = typeof lg_k !== 'undefined' && lg_k != null ? Number(lg_k) : 12;
+    const seed_val = typeof seed !== 'undefined' && seed != null ? Number(seed) : 9001;
+    state.union = new Module.theta_union(lg_k_val, seed_val);
+  }
+  
+  if (sketch != null) {
+    try {
+      const seed_val = typeof seed !== 'undefined' && seed != null ? Number(seed) : 9001;
+      const sketchBytes = typeof sketch === 'string' ? base64ToBytes(sketch) : sketch;
+      const sketchString = uint8ArrayToString(sketchBytes);
+      state.union.updateWithBytes(sketchString, seed_val);
+    } catch (e) {
+      if (e.message != null) throw e;
+      throw new Error(Module.getExceptionMessage(e));
+    }
+  }
+}
+
+export function merge(state1, state2) {
+  // Cannot merge theta_union objects directly in WebAssembly
+  throw new Error("MERGE not supported for theta_union - use single-node aggregation");
+}
+
+export function finalize(state) {
+  if (state.union != null) {
+    try {
+      return state.union.getResultAsUint8ArrayCompressed();
+    } finally {
+      state.union.delete();
+      state.union = null;
+    }
+  }
+  return null;
+}
+
 """;

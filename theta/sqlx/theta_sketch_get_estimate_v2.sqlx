@@ -20,20 +20,25 @@
 config { hasOutput: true, tags: ["theta", "udfs"] }
 
 CREATE OR REPLACE FUNCTION ${self()}(sketch BYTES, seed INT64)
-RETURNS INT
+RETURNS FLOAT64
 LANGUAGE js
 OPTIONS (
-  library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.js"],
-  description = '''Returns the number of retained entries in the given sketch.
-  
-Param sketch: The given sketch to query as BYTES.
+  library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs"],
+  description = '''Returns the estimate of unique count from the given sketch.
+
+This is the new .mjs-compatible version with explicit seed parameter.
+
+Param sketch: the given sketch as BYTES.
 Param seed: This is used to confirm that the given sketch was configured with the correct seed.
-Returns: number of retained entries as INT.
+Returns: an approximation to the number of distinct values of the input.
 
 For more information:
  - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
 '''
 ) AS R"""
+
+import ModuleFactory from "${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs";
+var Module = await ModuleFactory();
 
 // Base64 decode function since BigQuery doesn't have atob
 function base64ToBytes(base64) {
@@ -60,12 +65,29 @@ function base64ToBytes(base64) {
   return new Uint8Array(result);
 }
 
-if (sketch == null) return null;
-const default_seed = 9001; // Match existing sketch seed hash 37836
+// Convert Uint8Array to string for WebAssembly
+function uint8ArrayToString(uint8Array) {
+  let result = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    result += String.fromCharCode(uint8Array[i]);
+  }
+  return result;
+}
+
+if (sketch == null) return 0.0;
+
+// Use same default seed as aggregation functions for compatibility
+const default_seed = 9001;
+seed = seed ? Math.floor(Number(seed)) >>> 0 : default_seed;
+
 try {
-  return Module.compact_theta_sketch.getNumRetainedFromBytes(typeof sketch === 'string' ? base64ToBytes(sketch) : sketch, seed ? Number(seed) : default_seed);
+  const sketchBytes = typeof sketch === 'string' ? base64ToBytes(sketch) : sketch;
+  const sketchString = uint8ArrayToString(sketchBytes);
+  
+  return Module.compact_theta_sketch.getEstimateFromBytes(sketchString, seed);
 } catch (e) {
   if (e.message != null) throw e;
   throw new Error(Module.getExceptionMessage(e));
 }
+
 """;

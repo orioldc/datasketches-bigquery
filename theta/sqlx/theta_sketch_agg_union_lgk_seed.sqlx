@@ -37,13 +37,39 @@ For more information:
 ) AS R"""
 import ModuleFactory from "${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs";
 var Module = await ModuleFactory();
-const default_lg_k = Number(Module.DEFAULT_LG_K);
-const default_seed = BigInt(Module.DEFAULT_SEED);
+const default_lg_k = 12;
+const default_seed = 9001; // Match existing sketch seed hash 37836
 
 var buffer = {ptr: 0, size: 0};
 
 function reserveBuffer(size) {
-  if (buffer.size < size) {
+  
+// Base64 decode function since BigQuery doesn't have atob
+function base64ToBytes(base64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = [];
+  let i = 0;
+  
+  // Remove padding and non-base64 chars
+  base64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  
+  while (i < base64.length) {
+    const a = chars.indexOf(base64.charAt(i++));
+    const b = chars.indexOf(base64.charAt(i++));
+    const c = chars.indexOf(base64.charAt(i++));
+    const d = chars.indexOf(base64.charAt(i++));
+    
+    const bitmap = (a << 18) | (b << 12) | (c << 6) | d;
+    
+    result.push((bitmap >> 16) & 255);
+    if (c !== 64) result.push((bitmap >> 8) & 255);
+    if (d !== 64) result.push(bitmap & 255);
+  }
+  
+  return new Uint8Array(result);
+}
+
+if (buffer.size < size) {
     if (buffer.ptr != 0) {
       Module._free(buffer.ptr);
     }
@@ -74,7 +100,7 @@ function ensureUnion(state) {
 export function initialState(params) {
   var state = {
     lg_k: params.lg_k == null ? default_lg_k : Number(params.lg_k),
-    seed: params.seed == null ? default_seed : BigInt(params.seed)
+    seed: params.seed == null ? default_seed : Math.floor(Number(params.seed)) >>> 0
   };
   reserveBuffer(Module.compact_theta_sketch.getMaxSerializedSizeBytes(state.lg_k));
   return state;

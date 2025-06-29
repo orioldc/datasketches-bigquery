@@ -19,21 +19,27 @@
 
 config { hasOutput: true, tags: ["theta", "udfs"] }
 
-CREATE OR REPLACE FUNCTION ${self()}(sketch BYTES, seed INT64)
-RETURNS INT
+CREATE OR REPLACE FUNCTION ${self()}(sketchA BYTES, sketchB BYTES, seed INT64)
+RETURNS BYTES
 LANGUAGE js
 OPTIONS (
-  library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.js"],
-  description = '''Returns the number of retained entries in the given sketch.
-  
-Param sketch: The given sketch to query as BYTES.
-Param seed: This is used to confirm that the given sketch was configured with the correct seed.
-Returns: number of retained entries as INT.
+  library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs"],
+  description = '''Computes a sketch that represents the set difference: sketchA and not sketchB.
+
+This is the new .mjs-compatible version that works seamlessly with aggregation functions.
+
+Param sketchA: the first sketch "A" as bytes.
+Param sketchB: the second sketch "B" as bytes.
+Param seed: This is used to confirm that the given sketches were configured with the correct seed.
+Returns: a Compact, Compressed Theta Sketch, as BYTES.
 
 For more information:
  - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
 '''
 ) AS R"""
+
+import ModuleFactory from "${dataform.projectConfig.vars.jsBucket}/theta_sketch.mjs";
+var Module = await ModuleFactory();
 
 // Base64 decode function since BigQuery doesn't have atob
 function base64ToBytes(base64) {
@@ -60,12 +66,32 @@ function base64ToBytes(base64) {
   return new Uint8Array(result);
 }
 
-if (sketch == null) return null;
-const default_seed = 9001; // Match existing sketch seed hash 37836
+// Convert Uint8Array to string for WebAssembly
+function uint8ArrayToString(uint8Array) {
+  let result = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    result += String.fromCharCode(uint8Array[i]);
+  }
+  return result;
+}
+
+if (sketchA == null) return null;
+if (sketchB == null) return sketchA;
+
+// Use same default seed as aggregation functions for compatibility
+const default_seed = 9001;
+seed = seed ? Math.floor(Number(seed)) >>> 0 : default_seed;
+
 try {
-  return Module.compact_theta_sketch.getNumRetainedFromBytes(typeof sketch === 'string' ? base64ToBytes(sketch) : sketch, seed ? Number(seed) : default_seed);
+  const sketchABytes = typeof sketchA === 'string' ? base64ToBytes(sketchA) : sketchA;
+  const sketchBBytes = typeof sketchB === 'string' ? base64ToBytes(sketchB) : sketchB;
+  const sketchAString = uint8ArrayToString(sketchABytes);
+  const sketchBString = uint8ArrayToString(sketchBBytes);
+  
+  return Module.thetaAnotBCompressed(sketchAString, sketchBString, seed);
 } catch (e) {
   if (e.message != null) throw e;
   throw new Error(Module.getExceptionMessage(e));
 }
+
 """;

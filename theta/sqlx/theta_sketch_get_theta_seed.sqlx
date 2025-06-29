@@ -24,7 +24,6 @@ RETURNS FLOAT64
 LANGUAGE js
 OPTIONS (
   library=["${dataform.projectConfig.vars.jsBucket}/theta_sketch.js"],
-  js_parameter_encoding_mode='STANDARD',
   description = '''Returns theta (effective sampling rate) as a fraction from 0 to 1.
   
 Param sketch: The given sketch to query as BYTES.
@@ -35,10 +34,36 @@ For more information:
  - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
 '''
 ) AS R"""
+
+// Base64 decode function since BigQuery doesn't have atob
+function base64ToBytes(base64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = [];
+  let i = 0;
+  
+  // Remove padding and non-base64 chars
+  base64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  
+  while (i < base64.length) {
+    const a = chars.indexOf(base64.charAt(i++));
+    const b = chars.indexOf(base64.charAt(i++));
+    const c = chars.indexOf(base64.charAt(i++));
+    const d = chars.indexOf(base64.charAt(i++));
+    
+    const bitmap = (a << 18) | (b << 12) | (c << 6) | d;
+    
+    result.push((bitmap >> 16) & 255);
+    if (c !== 64) result.push((bitmap >> 8) & 255);
+    if (d !== 64) result.push(bitmap & 255);
+  }
+  
+  return new Uint8Array(result);
+}
+
 if (sketch == null) return null;
-const default_seed = BigInt(Module.DEFAULT_SEED);
+const default_seed = 9001; // Match existing sketch seed hash 37836
 try {
-  return Module.compact_theta_sketch.getThetaFromBytes(sketch, seed ? BigInt(seed) : default_seed);
+  return Module.compact_theta_sketch.getThetaFromBytes(typeof sketch === 'string' ? base64ToBytes(sketch) : sketch, seed ? Number(seed) : default_seed);
 } catch (e) {
   if (e.message != null) throw e;
   throw new Error(Module.getExceptionMessage(e));
