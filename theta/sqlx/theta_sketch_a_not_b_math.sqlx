@@ -17,7 +17,11 @@
  * under the License.
  */
 
-config { hasOutput: true, tags: ["theta", "udfs"] }
+config { 
+  hasOutput: true, 
+  tags: ["theta", "udfs", "math"],
+  dependencies: ["theta_sketch_get_estimate", "theta_sketch_agg_union"]
+}
 
 CREATE OR REPLACE FUNCTION ${self()}(sketchA BYTES, sketchB BYTES, seed INT64)
 RETURNS FLOAT64

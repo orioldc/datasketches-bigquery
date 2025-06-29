@@ -328,7 +328,27 @@ npm install -g @dataform/cli
 dataform init-creds
 ```
 
-#### 6. WebAssembly Build Errors
+#### 6. Function Dependency Errors
+
+**Error Message:**
+```
+bigquery error: Function not found: bq_util_functions.theta_sketch_get_estimate
+```
+
+**Cause**: Mathematical wrapper functions depend on basic functions that haven't been created yet
+
+**Solution**: Deploy in correct order:
+```bash
+# Option 1: Deploy basic functions first, then math functions
+make theta.upload    # Upload WebAssembly artifacts
+make theta.create    # Create all functions (dependencies resolve automatically)
+
+# Option 2: If still failing, deploy in phases
+dataform run --tags "theta" --exclude-tags "math"  # Basic functions first
+dataform run --tags "theta"                        # Then all functions
+```
+
+#### 7. WebAssembly Build Errors
 ```bash
 # Error: emcc command not found
 # Solution: Activate Emscripten environment

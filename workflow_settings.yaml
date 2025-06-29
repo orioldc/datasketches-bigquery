@@ -1,0 +1,6 @@
+dataformCoreVersion: 3.0.8
+defaultLocation: "US"
+defaultProject: "orioldccharts"
+defaultDataset: "bq_util_functions"
+vars:
+  jsBucket: "gs://apache-datasketches"
