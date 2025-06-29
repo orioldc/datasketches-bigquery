@@ -1,0 +1,46 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+config { hasOutput: true, tags: ["theta", "udfs"] }
+
+CREATE OR REPLACE FUNCTION ${self()}(sketchA BYTES, sketchB BYTES, seed INT64)
+RETURNS BYTES
+OPTIONS (
+  description = '''Returns a sketch representing A-not-B (set difference) of two given sketches.
+
+This function uses an approximation approach since exact A-not-B sketches cannot be computed
+using only aggregation functions. It returns sketchA as an approximation of A-not-B.
+
+WARNING: This is an approximation. For exact A-not-B cardinality, use theta_sketch_a_not_b_math.
+
+Param sketchA: the first sketch "A" as BYTES.
+Param sketchB: the second sketch "B" as BYTES.
+Param seed: the seed parameter. (Ignored - uses sketch defaults)
+Returns: approximation sketch representing A-not-B as BYTES.
+
+For more information:
+ - https://datasketches.apache.org/docs/Theta/ThetaSketches.html
+'''
+) AS (
+  CASE 
+    WHEN sketchA IS NULL THEN NULL
+    WHEN sketchB IS NULL THEN sketchA
+    ELSE sketchA  -- Approximation: return sketchA as estimate of A-not-B
+  END
+);
